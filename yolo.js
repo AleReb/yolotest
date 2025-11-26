@@ -1,19 +1,29 @@
 // YOLO Object Tracking - Web Version
-// Author: Alejandro Rebolledo
-
-// Configure ONNX Runtime WASM paths to load from CDN
-// This ensures it works correctly on GitHub Pages without needing to upload .wasm files
-ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/";
+// Adapted from GitHub example for YOLOv8/v11 ONNX
 
 // Configuration
 const CONFIG = {
-    modelPath: 'yolo11n.onnx',
-    inputSize: 640,
+    modelPath: 'yolo11n-320.onnx', // Default to Lite model
+    inputSize: 320,                // Default to 320
     confidenceThreshold: 0.25,
     iouThreshold: 0.45,
     maxTrailLength: 30,
     movementThreshold: 2.0
 };
+
+// Neon Color Palette
+const COLORS = [
+    '#00FF00', // Lime
+    '#00FFFF', // Cyan
+    '#FF00FF', // Magenta
+    '#FFFF00', // Yellow
+    '#FFA500', // Orange
+    '#FF69B4', // Hot Pink
+    '#00BFFF', // Deep Sky Blue
+    '#ADFF2F', // Green Yellow
+    '#FF4500', // Orange Red
+    '#7FFF00'  // Chartreuse
+];
 
 // COCO class names
 const COCO_CLASSES = [
@@ -34,10 +44,10 @@ let stream = null;
 let animationId = null;
 let trackHistory = {};
 let nextObjectId = 0;
-let objectIdMap = new Map();
 let fpsCounter = { frames: 0, lastTime: Date.now() };
 let showTrails = true;
-let detectionFrame = 0;  // Para limitar logging
+let performanceMode = true; // Default to true
+let frameCount = 0;
 
 // DOM elements
 const webcam = document.getElementById('webcam');
@@ -48,6 +58,7 @@ const stopBtn = document.getElementById('stopBtn');
 const fpsEl = document.getElementById('fps');
 const objectsEl = document.getElementById('objects');
 const showTrailsCheckbox = document.getElementById('showTrails');
+const performanceCheckbox = document.getElementById('performanceMode');
 
 // Debug logging
 function log(msg) {
@@ -62,35 +73,56 @@ function log(msg) {
 }
 
 // Initialize
-async function init() {
+async function init(modelName = 'yolo11n-320.onnx', size = 320) {
     try {
-        log('Initializing...');
-        log(`Loading model from: ${CONFIG.modelPath}`);
+        // Stop any existing loop
+        if (animationId) {
+            cancelAnimationFrame(animationId);
+            animationId = null;
+        }
 
-        // Check if ort is loaded
+        // Show loading
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) loadingEl.style.display = 'flex';
+
+        log(`Switching to model: ${modelName} (${size}x${size})...`);
+
+        // Update config
+        CONFIG.modelPath = modelName;
+        CONFIG.inputSize = size;
+
         if (typeof ort === 'undefined') {
             throw new Error('onnxruntime-web script not loaded! Check internet connection.');
         }
 
-        log('Creating ONNX Runtime session...');
+        // Configure WASM paths
+        ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/";
+
+        // Release old session if exists
+        if (session) {
+            try {
+                // session.release(); // Not always available/needed in web
+                session = null;
+            } catch (e) { console.warn(e); }
+        }
+
         session = await ort.InferenceSession.create(CONFIG.modelPath);
 
         log('Model loaded successfully!');
-        log(`Input names: ${session.inputNames.join(', ')}`);
-        log(`Output names: ${session.outputNames.join(', ')}`);
 
-        // Hide loading spinner
-        const loadingEl = document.getElementById('loading');
-        if (loadingEl) {
-            loadingEl.style.display = 'none';
+        if (loadingEl) loadingEl.style.display = 'none';
+        startBtn.disabled = false;
+
+        // If we were already running, restart
+        if (stream) {
+            detectObjects();
+        } else {
+            log('Ready to start! Click "Start Camera"');
         }
 
-        startBtn.disabled = false;
-        log('Ready to start! Click "Start Camera"');
     } catch (error) {
         console.error('Error loading model:', error);
         log(`ERROR: ${error.message}`);
-        log('TIP: If running locally, use a local server (python -m http.server). Direct file:// access is blocked by browsers.');
     }
 }
 
@@ -135,61 +167,113 @@ function stopWebcam() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
-// Preprocess image for YOLO
-function preprocessImage(video) {
-    const tempCanvas = document.createElement('canvas');
-    tempCanvas.width = CONFIG.inputSize;
-    tempCanvas.height = CONFIG.inputSize;
-    const tempCtx = tempCanvas.getContext('2d');
+/**
+ * Prepare input tensor for YOLOv8/v11
+ */
+async function prepare_input(video) {
+    const canvas = document.createElement("canvas");
+    canvas.width = CONFIG.inputSize;
+    canvas.height = CONFIG.inputSize;
+    const context = canvas.getContext("2d");
+    context.drawImage(video, 0, 0, CONFIG.inputSize, CONFIG.inputSize);
+    const imgData = context.getImageData(0, 0, CONFIG.inputSize, CONFIG.inputSize);
+    const pixels = imgData.data;
 
-    tempCtx.drawImage(video, 0, 0, CONFIG.inputSize, CONFIG.inputSize);
-    const imageData = tempCtx.getImageData(0, 0, CONFIG.inputSize, CONFIG.inputSize);
-
-    const float32Data = new Float32Array(3 * CONFIG.inputSize * CONFIG.inputSize);
-    for (let i = 0; i < imageData.data.length; i += 4) {
-        const idx = i / 4;
-        float32Data[idx] = imageData.data[i] / 255.0; // R
-        float32Data[CONFIG.inputSize * CONFIG.inputSize + idx] = imageData.data[i + 1] / 255.0; // G
-        float32Data[2 * CONFIG.inputSize * CONFIG.inputSize + idx] = imageData.data[i + 2] / 255.0; // B
+    const red = [], green = [], blue = [];
+    for (let index = 0; index < pixels.length; index += 4) {
+        red.push(pixels[index] / 255.0);
+        green.push(pixels[index + 1] / 255.0);
+        blue.push(pixels[index + 2] / 255.0);
     }
-
-    return new ort.Tensor('float32', float32Data, [1, 3, CONFIG.inputSize, CONFIG.inputSize]);
+    const input = [...red, ...green, ...blue];
+    return new ort.Tensor(Float32Array.from(input), [1, 3, CONFIG.inputSize, CONFIG.inputSize]);
 }
 
-// Non-Maximum Suppression
-function nms(boxes, scores, iouThreshold) {
-    const selected = [];
-    const indices = scores.map((_, i) => i).sort((a, b) => scores[b] - scores[a]);
+/**
+ * Process YOLO output
+ */
+function process_output(output, img_width, img_height) {
+    let boxes = [];
 
-    while (indices.length > 0) {
-        const current = indices.shift();
-        selected.push(current);
+    // Calculate number of anchors dynamically
+    // Output shape is [1, 84, N] -> flattened is 84 * N
+    // So N = length / 84
+    const numAnchors = output.length / 84;
 
-        indices.splice(0, indices.length, ...indices.filter(idx => {
-            const iou = calculateIoU(boxes[current], boxes[idx]);
-            return iou < iouThreshold;
-        }));
+    for (let index = 0; index < numAnchors; index++) {
+        // Find class with max probability
+        // The output is transposed: [84, N]
+        // [cx, cy, w, h, class0 ... class79]
+        // Stride is numAnchors
+
+        const [class_id, prob] = [...Array(80).keys()]
+            .map(col => [col, output[numAnchors * (col + 4) + index]])
+            .reduce((accum, item) => item[1] > accum[1] ? item : accum, [0, 0]);
+
+        if (prob < CONFIG.confidenceThreshold) {
+            continue;
+        }
+
+        const label = COCO_CLASSES[class_id];
+        const xc = output[index];
+        const yc = output[numAnchors + index];
+        const w = output[2 * numAnchors + index];
+        const h = output[3 * numAnchors + index];
+
+        // Convert to image coordinates
+        const x1 = (xc - w / 2) / CONFIG.inputSize * img_width;
+        const y1 = (yc - h / 2) / CONFIG.inputSize * img_height;
+        const x2 = (xc + w / 2) / CONFIG.inputSize * img_width;
+        const y2 = (yc + h / 2) / CONFIG.inputSize * img_height;
+
+        // Store as center coordinates for tracking
+        boxes.push({
+            x: x1,
+            y: y1,
+            w: x2 - x1,
+            h: y2 - y1,
+            cx: (x1 + x2) / 2,
+            cy: (y1 + y2) / 2,
+            class: label,
+            score: prob,
+            classId: class_id
+        });
     }
 
-    return selected;
+    // Sort by probability
+    boxes = boxes.sort((box1, box2) => box2.score - box1.score);
+
+    // NMS
+    const result = [];
+    while (boxes.length > 0) {
+        result.push(boxes[0]);
+        boxes = boxes.filter(box => iou(boxes[0], box) < 0.7);
+    }
+    return result;
 }
 
-// Calculate Intersection over Union
-function calculateIoU(box1, box2) {
+/**
+ * IoU Calculation
+ */
+function iou(box1, box2) {
+    return intersection(box1, box2) / union(box1, box2);
+}
+
+function union(box1, box2) {
+    const box1_area = box1.w * box1.h;
+    const box2_area = box2.w * box2.h;
+    return box1_area + box2_area - intersection(box1, box2);
+}
+
+function intersection(box1, box2) {
     const x1 = Math.max(box1.x, box2.x);
     const y1 = Math.max(box1.y, box2.y);
     const x2 = Math.min(box1.x + box1.w, box2.x + box2.w);
     const y2 = Math.min(box1.y + box1.h, box2.y + box2.h);
-
-    const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
-    const area1 = box1.w * box1.h;
-    const area2 = box2.w * box2.h;
-    const union = area1 + area2 - intersection;
-
-    return intersection / union;
+    return Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
 }
 
-// Assign IDs to detected objects
+// Assign IDs to detected objects (Tracking)
 function assignObjectIds(detections) {
     const currentIds = new Set();
 
@@ -254,113 +338,23 @@ function getDirection(objectId) {
     return 'still';
 }
 
-// Parse YOLO output (for YOLOv8/v11 format)
-function parseYOLOOutput(outputData, dims, videoWidth, videoHeight) {
-    // YOLO output format can be:
-    // [1, 85, 8400] - standard format (batch, features, detections)
-    // Where features = 4 (x,y,w,h) + 1 (objectness) + 80 (classes)
-
-    const detections = [];
-    const numClasses = COCO_CLASSES.length;
-
-    let numDetections, outputLength;
-
-    // Handle different output formats
-    if (dims.length === 3) {
-        // Format: [batch, features, num_detections]
-        numDetections = dims[2];
-        outputLength = dims[1];
-    } else if (dims.length === 2) {
-        // Format: [num_detections, features]
-        numDetections = dims[0];
-        outputLength = dims[1];
-    } else {
-        log(`ERROR: Unexpected output shape: ${dims}`);
-        return [];
-    }
-
-    const scaleX = videoWidth / CONFIG.inputSize;
-    const scaleY = videoHeight / CONFIG.inputSize;
-
-    // Iterate through detections
-    for (let i = 0; i < Math.min(numDetections, outputData.length / outputLength); i++) {
-        let idx;
-
-        if (dims.length === 3) {
-            // For [batch, features, detections] format
-            idx = i * outputLength;
-        } else {
-            // For [detections, features] format
-            idx = i * outputLength;
-        }
-
-        // Extract bounding box (center coordinates)
-        const cx = (outputData[idx] || 0) * scaleX;
-        const cy = (outputData[idx + 1] || 0) * scaleY;
-        const w = (outputData[idx + 2] || 0) * scaleX;
-        const h = (outputData[idx + 3] || 0) * scaleY;
-        const objectness = outputData[idx + 4] || 0;
-
-        // Skip invalid bounding boxes
-        if (w <= 0 || h <= 0) continue;
-        if (objectness < CONFIG.confidenceThreshold) continue;
-
-        // Find class with highest confidence
-        let maxClassScore = 0;
-        let classId = 0;
-
-        for (let j = 0; j < Math.min(numClasses, outputLength - 5); j++) {
-            const classScore = outputData[idx + 5 + j] || 0;
-            if (classScore > maxClassScore) {
-                maxClassScore = classScore;
-                classId = j;
-            }
-        }
-
-        // Final confidence is objectness * class_confidence
-        const finalConfidence = objectness * maxClassScore;
-
-        if (finalConfidence >= CONFIG.confidenceThreshold && classId < COCO_CLASSES.length) {
-            detections.push({
-                cx: cx,
-                cy: cy,
-                x: cx - w / 2,
-                y: cy - h / 2,
-                w: w,
-                h: h,
-                confidence: finalConfidence,
-                classId: classId,
-                className: COCO_CLASSES[classId] || 'unknown'
-            });
-        }
-    }
-
-    // Apply NMS
-    if (detections.length > 1) {
-        const boxes = detections.map(d => ({ x: d.x, y: d.y, w: d.w, h: d.h }));
-        const scores = detections.map(d => d.confidence);
-        const kept = nms(boxes, scores, CONFIG.iouThreshold);
-        return kept.map(i => detections[i]);
-    }
-
-    return detections;
-}
-
 // Draw detections
 function drawDetections(detections) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    // Draw trails first (background)
+    // Draw trails
     if (showTrails) {
-        ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
         ctx.lineWidth = 2;
 
         for (const [id, history] of Object.entries(trackHistory)) {
             if (history.length < 2) continue;
 
+            // Use same color for trail as object if possible, or default grey
+            // We don't easily have classId here without storing it in history
+            ctx.strokeStyle = 'rgba(230, 230, 230, 0.5)';
+
             ctx.beginPath();
             ctx.moveTo(history[0].x, history[0].y);
-
             for (let i = 1; i < history.length; i++) {
                 ctx.lineTo(history[i].x, history[i].y);
             }
@@ -368,37 +362,38 @@ function drawDetections(detections) {
         }
     }
 
-    // Draw bounding boxes and labels
-    detections.forEach((det, idx) => {
+    detections.forEach(det => {
+        // Get color based on class ID
+        const color = COLORS[det.classId % COLORS.length];
+
         // Draw bounding box
-        ctx.strokeStyle = '#00FF00';
-        ctx.lineWidth = 2;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 3;
         ctx.strokeRect(det.x, det.y, det.w, det.h);
 
-        // Draw label background
-        const label = `${det.className} ${(det.confidence * 100).toFixed(1)}%`;
-        ctx.font = 'bold 14px Arial';
+        // Draw label
+        const direction = getDirection(det.id);
+        const label = `ID:${det.id} ${det.class} ${Math.round(det.score * 100)}%`;
+        const subLabel = direction;
+
+        ctx.font = '16px Arial';
         const textMetrics = ctx.measureText(label);
-        const labelHeight = 20;
-        const labelWidth = textMetrics.width + 10;
+        const textX = det.x;
+        const textY = det.y - 5;
 
-        ctx.fillStyle = '#00FF00';
-        ctx.fillRect(det.x, det.y - labelHeight - 5, labelWidth, labelHeight);
+        // Background for text
+        ctx.fillStyle = color; // Use same color but maybe transparent?
+        ctx.globalAlpha = 0.7;
+        ctx.fillRect(textX, textY - 20, textMetrics.width + 10, 45);
+        ctx.globalAlpha = 1.0;
 
-        // Draw label text
+        // Text color (Black is usually good on neon colors)
         ctx.fillStyle = '#000000';
-        ctx.font = 'bold 14px Arial';
-        ctx.fillText(label, det.x + 5, det.y - 5);
-
-        // Draw object ID and direction
-        if (det.id !== undefined) {
-            const direction = getDirection(det.id);
-            ctx.fillStyle = '#FFFF00';
-            ctx.font = 'bold 12px Arial';
-            ctx.fillText(`ID: ${det.id}`, det.x, det.y + det.h + 15);
-            ctx.fillText(`${direction}`, det.x, det.y + det.h + 30);
-        }
+        ctx.fillText(label, textX + 5, textY);
+        ctx.fillText(subLabel, textX + 5, textY + 20);
     });
+
+    if (objectsEl) objectsEl.textContent = `Objetos: ${detections.length}`;
 }
 
 // Update FPS
@@ -409,7 +404,7 @@ function updateFPS() {
 
     if (elapsed >= 1000) {
         const fps = Math.round((fpsCounter.frames * 1000) / elapsed);
-        fpsEl.textContent = fps;
+        fpsEl.textContent = `FPS: ${fps}`;
         fpsCounter.frames = 0;
         fpsCounter.lastTime = now;
     }
@@ -420,45 +415,19 @@ async function detectObjects() {
     if (!session || !stream) return;
 
     try {
-        // Preprocess the current video frame
-        const inputTensor = preprocessImage(webcam);
+        const input = await prepare_input(webcam);
+        const outputs = await session.run({ images: input });
+        const output = outputs[session.outputNames[0]].data;
 
-        // Get input name from session
-        const inputName = session.inputNames[0];
-        const feeds = {};
-        feeds[inputName] = inputTensor;
+        let detections = process_output(output, webcam.videoWidth, webcam.videoHeight);
 
-        // Run inference
-        if (detectionFrame === 0) log(`Running inference with input: ${inputName}...`);
-        const outputs = await session.run(feeds);
-
-        if (detectionFrame === 0) log(`Output names: ${Object.keys(outputs).join(', ')}`);
-
-        // Get output tensor (first output)
-        const outputName = session.outputNames[0];
-        const outputData = outputs[outputName];
-
-        if (detectionFrame === 0) log(`Output shape: [${outputData.dims.join(', ')}], data length: ${outputData.data.length}`);
-
-        // Parse detections from YOLO output
-        const detections = parseYOLOOutput(outputData.data, outputData.dims, webcam.videoWidth, webcam.videoHeight);
-
-        if (detectionFrame === 0) log(`Parsed ${detections.length} detections`);
-
-        // Assign IDs and draw
         assignObjectIds(detections);
         drawDetections(detections);
         updateFPS();
 
-        if (objectsEl) {
-            objectsEl.textContent = `Objetos: ${detections.length}`;
-        }
-
-        detectionFrame++;
-
     } catch (error) {
         console.error('Detection error:', error);
-        log(`Inference Error: ${error.message}`);
+        log(`Error: ${error.message}`);
     }
 
     animationId = requestAnimationFrame(detectObjects);
@@ -471,5 +440,16 @@ showTrailsCheckbox.addEventListener('change', (e) => {
     showTrails = e.target.checked;
 });
 
+if (performanceCheckbox) {
+    performanceCheckbox.addEventListener('change', (e) => {
+        const isPerformance = e.target.checked;
+        if (isPerformance) {
+            init('yolo11n-320.onnx', 320);
+        } else {
+            init('yolo11n.onnx', 640);
+        }
+    });
+}
+
 // Initialize on load
-init();
+init('yolo11n-320.onnx', 320);

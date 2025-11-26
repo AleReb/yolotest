@@ -51,7 +51,8 @@ main {
     aspect-ratio: 16/9;
 }
 
-video, canvas {
+video,
+canvas {
     width: 100%;
     height: 100%;
     display: block;
@@ -90,8 +91,13 @@ video, canvas {
 }
 
 @keyframes spin {
-    0% { transform: rotate(0deg); }
-    100% { transform: rotate(360deg); }
+    0% {
+        transform: rotate(0deg);
+    }
+
+    100% {
+        transform: rotate(360deg);
+    }
 }
 
 .loading p {
@@ -165,6 +171,22 @@ video, canvas {
     height: 18px;
 }
 
+.select-input {
+    padding: 10px 15px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    font-size: 1em;
+    color: #333;
+    background-color: white;
+    cursor: pointer;
+    outline: none;
+    min-width: 150px;
+}
+
+.select-input:hover {
+    border-color: #667eea;
+}
+
 .stats {
     display: flex;
     gap: 20px;
@@ -222,7 +244,7 @@ video, canvas {
     max-height: 200px;
 }
 
-#debug-console > div {
+#debug-console>div {
     color: #00ff00;
     font-size: 12px;
     line-height: 1.5;

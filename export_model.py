@@ -6,66 +6,87 @@ Export YOLOv11n to ONNX format for web browser use
 from ultralytics import YOLO
 import os
 import sys
-print(os.getcwd())
-print(os.listdir())
+import shutil
 
 def main():
     print("="*60)
-    print("YOLO11n ONNX Export para Web")
+    print("YOLO11n ONNX Export para Web (Robust)")
     print("="*60)
+    
+    cwd = os.getcwd()
+    print(f"Working directory: {cwd}")
 
     try:
-        print("\n1. Descargando y cargando modelo YOLOv11n...")
-        # YOLO descargará automáticamente si no existe
+        print("\n1. Loading YOLOv11n model...")
+        model_path = os.path.join(cwd, "yolo11n.pt")
+        if not os.path.exists(model_path):
+            print(f"   Downloading model to {model_path}...")
+        
         model = YOLO("yolo11n.pt")  
-        print("   OK: Modelo cargado/descargado")
+        print("   OK: Model loaded")
 
-        print("\n2. Exportando a formato ONNX...")
-        print("   Configuracion:")
-        print("   - Input size: 640x640")
-        print("   - opset: 12")
-        print("   - Simplify: True")
+        configs = [
+            {"name": "yolo11n-320.onnx", "size": 320},
+            {"name": "yolo11n.onnx", "size": 640}
+        ]
 
-        onnx_path = model.export(
-            format="onnx",
-            imgsz=640,
-            opset=12,
-            simplify=True,
-            dynamic=False,
-            half=False
-        )
+        for config in configs:
+            print(f"\n--- Exporting {config['name']} ({config['size']}x{config['size']}) ---")
+            
+            # Export
+            # Ultralytics exports to the same dir as the .pt file usually
+            exported_path = model.export(
+                format="onnx",
+                imgsz=config['size'],
+                opset=12,
+                simplify=True,
+                dynamic=False,
+                half=False
+            )
+            
+            print(f"   Export returned path: {exported_path}")
+            
+            # Ensure we have an absolute path
+            if not os.path.isabs(exported_path):
+                exported_path = os.path.abspath(exported_path)
+            
+            print(f"   Looking for file at: {exported_path}")
 
-        print(f"   OK: Exportado a: {onnx_path}")
+            if not os.path.exists(exported_path):
+                print(f"   ERROR: Exported file not found at {exported_path}")
+                # Try looking in current dir just in case
+                local_path = os.path.join(cwd, os.path.basename(exported_path))
+                if os.path.exists(local_path):
+                    print(f"   Found it at {local_path} instead")
+                    exported_path = local_path
+                else:
+                    return 1
 
-        # Verificar archivo
-        if os.path.exists(onnx_path):
-            size_mb = os.path.getsize(onnx_path) / (1024 * 1024)
-            print(f"\n3. Verificando archivo...")
-            print(f"   OK: Tamaño: {size_mb:.1f} MB")
-            print(f"   OK: Ruta: {os.path.abspath(onnx_path)}")
+            # Target path
+            target_path = os.path.join(cwd, config['name'])
+            
+            # If the exported file IS the target file, we are done
+            if os.path.abspath(exported_path) == os.path.abspath(target_path):
+                print(f"   File is already in place: {target_path}")
+            else:
+                print(f"   Moving/Renaming to {target_path}...")
+                if os.path.exists(target_path):
+                    os.remove(target_path)
+                shutil.move(exported_path, target_path)
+                print(f"   OK: Moved")
+            
+            # Verify
+            if os.path.exists(target_path):
+                size_mb = os.path.getsize(target_path) / (1024 * 1024)
+                print(f"   OK: Verified Size: {size_mb:.1f} MB")
+            else:
+                print(f"   ERROR: Target file missing after move!")
+                return 1
 
-            # Mover a yolo11n.onnx si es diferente
-            target = "yolo11n.onnx"
-            if onnx_path != target:
-                import shutil
-                print(f"\n4. Moviendo a {target}...")
-                if os.path.exists(target):
-                    os.remove(target)
-                    print(f"   OK: Archivo anterior eliminado")
-
-                shutil.move(onnx_path, target)
-                print(f"   OK: Guardado como {target}")
-
-            print("\n" + "="*60)
-            print("EXITO: Modelo exportado correctamente")
-            print("="*60)
-            print(f"\nEl archivo 'yolo11n.onnx' esta listo para usar en web")
-            print(f"Tamaño: {size_mb:.1f} MB")
-            return 0
-
-        else:
-            print(f"ERROR: Archivo no encontrado")
-            return 1
+        print("\n" + "="*60)
+        print("EXITO: Modelos exportados correctamente")
+        print("="*60)
+        return 0
 
     except Exception as e:
         print(f"\nERROR: {e}")

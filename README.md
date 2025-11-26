@@ -1,47 +1,55 @@
-<p align="center">
-  <img src="img/screenshot.jpg" />
-</p>
+# YOLOv11 Object Tracking - Web Version
 
+Este proyecto es una implementación web de detección y seguimiento de objetos en tiempo real utilizando **YOLOv11** y **ONNX Runtime**. Funciona completamente en el navegador, utilizando la cámara web para detectar y rastrear objetos con visualización de estelas y dirección de movimiento.
 
-This is adapted and rewritten version of YOLOv8 object segmentation (powered by onnx). This version can be run on JavaScript without any frameworks and demonstrates object detection using web camera.
+![Screenshot](img/screenshot.jpg)
 
-## Setup
-To see it at work, just run index.html file. 
+## Características
 
-## Models
+*   **Detección en Tiempo Real**: Utiliza el modelo YOLOv11n (exportado a ONNX) para detectar 80 clases de objetos (personas, vehículos, animales, etc.).
+*   **Seguimiento de Objetos (Tracking)**: Asigna IDs únicos a los objetos y mantiene su rastro a través de los frames.
+*   **Visualización de Estelas**: Dibuja la trayectoria de movimiento de cada objeto.
+*   **Modo Rendimiento (Lite)**: Incluye una opción para cambiar dinámicamente a un modelo más ligero (320x320) para dispositivos menos potentes.
+*   **Interfaz Neon**: Diseño moderno con colores dinámicos para cada tipo de objeto.
+*   **Privacidad**: Todo el procesamiento se realiza localmente en el navegador. Ninguna imagen se envía a servidores externos.
 
-**Main Model**
+## Instalación y Uso
 
-YOLOv8n model converted to onnx with input dimensions of 416x416. 
+1.  **Clonar el repositorio**:
+    ```bash
+    git clone https://github.com/tu-usuario/yolo-web-tracking.git
+    cd yolo-web-tracking
+    ```
 
-```
-used model : yolov8n.onnx
-size       : ~ 12.5Mb
-```
+2.  **Ejecutar servidor local**:
+    Para probarlo localmente, necesitas un servidor web simple (debido a las políticas de seguridad del navegador para la cámara y WASM).
+    ```bash
+    python -m http.server 8000
+    ```
 
-**NMS**
+3.  **Abrir en el navegador**:
+    Visita `http://localhost:8000` en tu navegador.
 
-ONNX model to perform NMS operator [CUSTOM].
+## Estructura del Proyecto
 
-```
-nms-yolov8.onnx
-```
+*   `index.html`: Interfaz principal.
+*   `yolo.js`: Lógica de detección, seguimiento y renderizado.
+*   `style.css`: Estilos de la aplicación.
+*   `model/`: Carpeta para los modelos ONNX (se deben generar o descargar).
+    *   `yolo11n.onnx`: Modelo estándar (640x640).
+    *   `yolo11n-320.onnx`: Modelo ligero (320x320).
 
+## Créditos
 
-## Use another model
+Creado por **Alejandro Rebolledo** (arebolledo@udd.cl).
 
-It is possible to use bigger models converted to onnx, however this might impact the total loading time.
+Basado en la arquitectura YOLO de Ultralytics y ONNX Runtime Web.
 
-To use another YOLOv8 model, download it from Ultralytics and convert it to onnx file format.
+## Licencia
 
-**Custom YOLOv8 Object Detection Models**
+Este proyecto está bajo la licencia **Creative Commons Attribution-NonCommercial 4.0 International (CC BY-NC 4.0)**.
+Ver el archivo `LICENSE` para más detalles.
 
-Please update labels object inside of main.js file.
+## Descargo de Responsabilidad
 
-## Updates
-* Added another web camera based example for YOLOv8 running without any frameworks. In this example there is no need for NMS operator, but it is slower. See:  "yolov8_onnx_without_nms" folder.
-* Added TFJS version of YOLOv8 which is faster and more robust. See: "tfjs_version" folder.
-
-## Demo
-To see demo, please visit the <a href="https://yolov8-object-detection.glitch.me/">following page</a>.
-To see TFJS version, please visit <a href="https://yolov8-objectdetection.glitch.me/">this page</a>.
+ESTE SOFTWARE SE PROPORCIONA "TAL CUAL", SIN GARANTÍA DE NINGÚN TIPO, EXPRESA O IMPLÍCITA. EL USO DE ESTE CÓDIGO ES BAJO SU PROPIO RIESGO. EL AUTOR NO SE HACE RESPONSABLE DE NINGÚN DAÑO O PÉRDIDA QUE PUEDA SURGIR DEL USO DE ESTE SOFTWARE.
