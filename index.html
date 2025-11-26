@@ -1,11 +1,13 @@
 <!DOCTYPE html>
 <html lang="es">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>YOLO Object Tracking - Web</title>
     <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
     <div class="container">
         <header>
@@ -26,6 +28,10 @@
             <div class="controls">
                 <button id="startBtn" class="btn btn-primary">▶ Iniciar Cámara</button>
                 <button id="stopBtn" class="btn btn-secondary" disabled>⏸ Detener</button>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="showTrails" checked>
+                    Mostrar Estelas
+                </label>
                 <div class="stats">
                     <span id="fps">FPS: 0</span>
                     <span id="objects">Objetos: 0</span>
@@ -44,12 +50,14 @@
         </main>
 
         <footer>
-            <p>Creado por <strong>Alejandro Rebolledo</strong> | <a href="mailto:arebolledo@udd.cl">arebolledo@udd.cl</a></p>
+            <p>Creado por <strong>Alejandro Rebolledo</strong> | <a
+                    href="mailto:arebolledo@udd.cl">arebolledo@udd.cl</a></p>
             <p class="license">Licencia CC BY-NC 4.0</p>
         </footer>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
-    <script src="app.js"></script>
+    <script src="yolo.js"></script>
 </body>
+
 </html>

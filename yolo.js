@@ -1,6 +1,10 @@
 // YOLO Object Tracking - Web Version
 // Author: Alejandro Rebolledo
 
+// Configure ONNX Runtime WASM paths to load from CDN
+// This ensures it works correctly on GitHub Pages without needing to upload .wasm files
+ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/";
+
 // Configuration
 const CONFIG = {
     modelPath: 'yolo11n.onnx',
