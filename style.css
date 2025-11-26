@@ -8,90 +8,116 @@ body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     min-height: 100vh;
-    display: flex;
-    justify-content: center;
-    align-items: center;
     padding: 20px;
 }
 
 .container {
-    background: rgba(255, 255, 255, 0.95);
-    border-radius: 20px;
-    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
     max-width: 1200px;
-    width: 100%;
-    padding: 30px;
+    margin: 0 auto;
+    background: white;
+    border-radius: 10px;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    overflow: hidden;
 }
 
 header {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 30px;
     text-align: center;
-    margin-bottom: 30px;
 }
 
-h1 {
-    color: #667eea;
-    font-size: 2.5rem;
+header h1 {
+    font-size: 2.5em;
     margin-bottom: 10px;
 }
 
-.subtitle {
-    color: #666;
-    font-size: 1.1rem;
+header .subtitle {
+    font-size: 1.1em;
+    opacity: 0.9;
+}
+
+main {
+    padding: 30px;
 }
 
 .video-container {
     position: relative;
-    width: 100%;
-    max-width: 800px;
-    margin: 0 auto 30px;
-    border-radius: 15px;
+    background: black;
+    border-radius: 10px;
     overflow: hidden;
-    background: #000;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+    margin-bottom: 30px;
+    max-width: 100%;
+    aspect-ratio: 16/9;
 }
 
-#webcam {
+video, canvas {
     width: 100%;
+    height: 100%;
     display: block;
+    position: absolute;
+    top: 0;
+    left: 0;
+    object-fit: cover;
 }
 
 #canvas {
+    z-index: 10;
+}
+
+.loading {
     position: absolute;
     top: 0;
     left: 0;
     width: 100%;
     height: 100%;
+    background: rgba(0, 0, 0, 0.7);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    z-index: 20;
 }
 
-.status {
-    position: absolute;
-    top: 10px;
-    left: 10px;
-    background: rgba(0, 0, 0, 0.7);
+.spinner {
+    border: 4px solid rgba(255, 255, 255, 0.3);
+    border-top: 4px solid white;
+    border-radius: 50%;
+    width: 40px;
+    height: 40px;
+    animation: spin 1s linear infinite;
+    margin-bottom: 20px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.loading p {
     color: white;
-    padding: 8px 15px;
-    border-radius: 5px;
-    font-size: 0.9rem;
+    font-size: 1.1em;
 }
 
 .controls {
     display: flex;
-    justify-content: center;
-    align-items: center;
     gap: 15px;
-    margin-bottom: 20px;
+    align-items: center;
     flex-wrap: wrap;
+    margin-bottom: 30px;
+    padding: 20px;
+    background: #f5f5f5;
+    border-radius: 10px;
 }
 
 .btn {
-    padding: 12px 30px;
+    padding: 10px 20px;
     border: none;
-    border-radius: 25px;
-    font-size: 1rem;
-    font-weight: 600;
+    border-radius: 5px;
+    font-size: 1em;
     cursor: pointer;
-    transition: all 0.3s ease;
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
+    transition: all 0.3s;
+    font-weight: bold;
 }
 
 .btn-primary {
@@ -101,19 +127,26 @@ h1 {
 
 .btn-primary:hover:not(:disabled) {
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+    box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+}
+
+.btn-primary:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .btn-secondary {
-    background: #e0e0e0;
-    color: #333;
+    background: #e74c3c;
+    color: white;
 }
 
 .btn-secondary:hover:not(:disabled) {
-    background: #d0d0d0;
+    background: #c0392b;
+    transform: translateY(-2px);
+    box-shadow: 0 5px 20px rgba(231, 76, 60, 0.4);
 }
 
-.btn:disabled {
+.btn-secondary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
 }
@@ -122,49 +155,85 @@ h1 {
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 1rem;
-    color: #333;
     cursor: pointer;
+    font-weight: 500;
 }
 
-.checkbox-label input[type="checkbox"] {
+.checkbox-label input {
+    cursor: pointer;
     width: 18px;
     height: 18px;
-    cursor: pointer;
 }
 
-.info-panel {
+.stats {
     display: flex;
-    justify-content: center;
-    gap: 40px;
+    gap: 20px;
+    margin-left: auto;
+    font-weight: bold;
+    color: #333;
+}
+
+.stats span {
+    padding: 8px 15px;
+    background: white;
+    border-radius: 5px;
+    border-left: 3px solid #667eea;
+}
+
+.info {
+    background: #f0f7ff;
+    border-left: 4px solid #667eea;
     padding: 20px;
-    background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-    border-radius: 15px;
+    border-radius: 5px;
     margin-bottom: 20px;
 }
 
-.info-item {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-}
-
-.info-item .label {
-    font-size: 0.9rem;
-    color: #666;
-    margin-bottom: 5px;
-}
-
-.info-item .value {
-    font-size: 1.8rem;
-    font-weight: bold;
+.info h3 {
     color: #667eea;
+    margin-bottom: 15px;
+    font-size: 1.2em;
+}
+
+.info ul {
+    list-style: none;
+    padding-left: 20px;
+}
+
+.info li {
+    color: #555;
+    margin-bottom: 8px;
+    position: relative;
+    padding-left: 20px;
+}
+
+.info li:before {
+    content: "✓";
+    position: absolute;
+    left: 0;
+    color: #667eea;
+    font-weight: bold;
+}
+
+#debug-console {
+    background: #1e1e1e !important;
+    border: 1px solid #444 !important;
+    padding: 15px !important;
+    border-radius: 5px;
+    max-height: 200px;
+}
+
+#debug-console > div {
+    color: #00ff00;
+    font-size: 12px;
+    line-height: 1.5;
+    margin-bottom: 2px;
 }
 
 footer {
+    background: #f5f5f5;
+    padding: 20px;
     text-align: center;
-    padding-top: 20px;
-    border-top: 2px solid #e0e0e0;
+    border-top: 1px solid #ddd;
     color: #666;
 }
 
@@ -177,23 +246,27 @@ footer a:hover {
     text-decoration: underline;
 }
 
-.disclaimer {
-    font-size: 0.85rem;
+footer .license {
+    font-size: 0.9em;
     margin-top: 10px;
-    color: #999;
 }
 
 @media (max-width: 768px) {
-    h1 {
-        font-size: 2rem;
+    header h1 {
+        font-size: 1.8em;
     }
-    
-    .container {
-        padding: 20px;
-    }
-    
-    .info-panel {
+
+    .controls {
         flex-direction: column;
-        gap: 20px;
+        align-items: stretch;
+    }
+
+    .stats {
+        margin-left: 0;
+        justify-content: space-between;
+    }
+
+    .btn {
+        width: 100%;
     }
 }

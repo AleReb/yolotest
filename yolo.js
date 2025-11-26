@@ -37,6 +37,7 @@ let nextObjectId = 0;
 let objectIdMap = new Map();
 let fpsCounter = { frames: 0, lastTime: Date.now() };
 let showTrails = true;
+let detectionFrame = 0;  // Para limitar logging
 
 // DOM elements
 const webcam = document.getElementById('webcam');
@@ -44,9 +45,8 @@ const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
 const startBtn = document.getElementById('startBtn');
 const stopBtn = document.getElementById('stopBtn');
-const statusEl = document.getElementById('status');
 const fpsEl = document.getElementById('fps');
-const objectCountEl = document.getElementById('objectCount');
+const objectsEl = document.getElementById('objects');
 const showTrailsCheckbox = document.getElementById('showTrails');
 
 // Debug logging
@@ -65,7 +65,6 @@ function log(msg) {
 async function init() {
     try {
         log('Initializing...');
-        statusEl.textContent = 'Loading YOLO model...';
         log(`Loading model from: ${CONFIG.modelPath}`);
 
         // Check if ort is loaded
@@ -73,15 +72,23 @@ async function init() {
             throw new Error('onnxruntime-web script not loaded! Check internet connection.');
         }
 
+        log('Creating ONNX Runtime session...');
         session = await ort.InferenceSession.create(CONFIG.modelPath);
-        statusEl.textContent = 'Model loaded! Click "Start Camera" to begin.';
+
         log('Model loaded successfully!');
-        log(`Input names: ${session.inputNames}`);
-        log(`Output names: ${session.outputNames}`);
+        log(`Input names: ${session.inputNames.join(', ')}`);
+        log(`Output names: ${session.outputNames.join(', ')}`);
+
+        // Hide loading spinner
+        const loadingEl = document.getElementById('loading');
+        if (loadingEl) {
+            loadingEl.style.display = 'none';
+        }
+
         startBtn.disabled = false;
+        log('Ready to start! Click "Start Camera"');
     } catch (error) {
         console.error('Error loading model:', error);
-        statusEl.textContent = 'Error loading model.';
         log(`ERROR: ${error.message}`);
         log('TIP: If running locally, use a local server (python -m http.server). Direct file:// access is blocked by browsers.');
     }
@@ -90,6 +97,7 @@ async function init() {
 // Start webcam
 async function startWebcam() {
     try {
+        log('Requesting camera access...');
         stream = await navigator.mediaDevices.getUserMedia({
             video: { width: 1280, height: 720, facingMode: 'user' }
         });
@@ -100,12 +108,14 @@ async function startWebcam() {
             canvas.height = webcam.videoHeight;
             startBtn.disabled = true;
             stopBtn.disabled = false;
-            statusEl.textContent = 'Running...';
+            log(`Camera ready: ${webcam.videoWidth}x${webcam.videoHeight}`);
+            log('Starting detection loop...');
             detectObjects();
         };
     } catch (error) {
         console.error('Error accessing webcam:', error);
-        statusEl.textContent = 'Error accessing webcam. Please allow camera access.';
+        log(`ERROR: ${error.message}`);
+        log('Please allow camera access and try again.');
     }
 }
 
@@ -121,7 +131,7 @@ function stopWebcam() {
     }
     startBtn.disabled = false;
     stopBtn.disabled = true;
-    statusEl.textContent = 'Stopped';
+    log('Detection stopped');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
 
@@ -244,9 +254,151 @@ function getDirection(objectId) {
     return 'still';
 }
 
+// Parse YOLO output (for YOLOv8/v11 format)
+function parseYOLOOutput(outputData, dims, videoWidth, videoHeight) {
+    // YOLO output format can be:
+    // [1, 85, 8400] - standard format (batch, features, detections)
+    // Where features = 4 (x,y,w,h) + 1 (objectness) + 80 (classes)
+
+    const detections = [];
+    const numClasses = COCO_CLASSES.length;
+
+    let numDetections, outputLength;
+
+    // Handle different output formats
+    if (dims.length === 3) {
+        // Format: [batch, features, num_detections]
+        numDetections = dims[2];
+        outputLength = dims[1];
+    } else if (dims.length === 2) {
+        // Format: [num_detections, features]
+        numDetections = dims[0];
+        outputLength = dims[1];
+    } else {
+        log(`ERROR: Unexpected output shape: ${dims}`);
+        return [];
+    }
+
+    const scaleX = videoWidth / CONFIG.inputSize;
+    const scaleY = videoHeight / CONFIG.inputSize;
+
+    // Iterate through detections
+    for (let i = 0; i < Math.min(numDetections, outputData.length / outputLength); i++) {
+        let idx;
+
+        if (dims.length === 3) {
+            // For [batch, features, detections] format
+            idx = i * outputLength;
+        } else {
+            // For [detections, features] format
+            idx = i * outputLength;
+        }
+
+        // Extract bounding box (center coordinates)
+        const cx = (outputData[idx] || 0) * scaleX;
+        const cy = (outputData[idx + 1] || 0) * scaleY;
+        const w = (outputData[idx + 2] || 0) * scaleX;
+        const h = (outputData[idx + 3] || 0) * scaleY;
+        const objectness = outputData[idx + 4] || 0;
+
+        // Skip invalid bounding boxes
+        if (w <= 0 || h <= 0) continue;
+        if (objectness < CONFIG.confidenceThreshold) continue;
+
+        // Find class with highest confidence
+        let maxClassScore = 0;
+        let classId = 0;
+
+        for (let j = 0; j < Math.min(numClasses, outputLength - 5); j++) {
+            const classScore = outputData[idx + 5 + j] || 0;
+            if (classScore > maxClassScore) {
+                maxClassScore = classScore;
+                classId = j;
+            }
+        }
+
+        // Final confidence is objectness * class_confidence
+        const finalConfidence = objectness * maxClassScore;
+
+        if (finalConfidence >= CONFIG.confidenceThreshold && classId < COCO_CLASSES.length) {
+            detections.push({
+                cx: cx,
+                cy: cy,
+                x: cx - w / 2,
+                y: cy - h / 2,
+                w: w,
+                h: h,
+                confidence: finalConfidence,
+                classId: classId,
+                className: COCO_CLASSES[classId] || 'unknown'
+            });
+        }
+    }
+
+    // Apply NMS
+    if (detections.length > 1) {
+        const boxes = detections.map(d => ({ x: d.x, y: d.y, w: d.w, h: d.h }));
+        const scores = detections.map(d => d.confidence);
+        const kept = nms(boxes, scores, CONFIG.iouThreshold);
+        return kept.map(i => detections[i]);
+    }
+
+    return detections;
+}
+
 // Draw detections
 function drawDetections(detections) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw trails first (background)
+    if (showTrails) {
+        ctx.strokeStyle = 'rgba(200, 200, 200, 0.3)';
+        ctx.lineWidth = 2;
+
+        for (const [id, history] of Object.entries(trackHistory)) {
+            if (history.length < 2) continue;
+
+            ctx.beginPath();
+            ctx.moveTo(history[0].x, history[0].y);
+
+            for (let i = 1; i < history.length; i++) {
+                ctx.lineTo(history[i].x, history[i].y);
+            }
+            ctx.stroke();
+        }
+    }
+
+    // Draw bounding boxes and labels
+    detections.forEach((det, idx) => {
+        // Draw bounding box
+        ctx.strokeStyle = '#00FF00';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(det.x, det.y, det.w, det.h);
+
+        // Draw label background
+        const label = `${det.className} ${(det.confidence * 100).toFixed(1)}%`;
+        ctx.font = 'bold 14px Arial';
+        const textMetrics = ctx.measureText(label);
+        const labelHeight = 20;
+        const labelWidth = textMetrics.width + 10;
+
+        ctx.fillStyle = '#00FF00';
+        ctx.fillRect(det.x, det.y - labelHeight - 5, labelWidth, labelHeight);
+
+        // Draw label text
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 14px Arial';
+        ctx.fillText(label, det.x + 5, det.y - 5);
+
+        // Draw object ID and direction
+        if (det.id !== undefined) {
+            const direction = getDirection(det.id);
+            ctx.fillStyle = '#FFFF00';
+            ctx.font = 'bold 12px Arial';
+            ctx.fillText(`ID: ${det.id}`, det.x, det.y + det.h + 15);
+            ctx.fillText(`${direction}`, det.x, det.y + det.h + 30);
+        }
+    });
 }
 
 // Update FPS
@@ -268,14 +420,41 @@ async function detectObjects() {
     if (!session || !stream) return;
 
     try {
+        // Preprocess the current video frame
+        const inputTensor = preprocessImage(webcam);
+
+        // Get input name from session
+        const inputName = session.inputNames[0];
+        const feeds = {};
+        feeds[inputName] = inputTensor;
+
+        // Run inference
+        if (detectionFrame === 0) log(`Running inference with input: ${inputName}...`);
+        const outputs = await session.run(feeds);
+
+        if (detectionFrame === 0) log(`Output names: ${Object.keys(outputs).join(', ')}`);
+
+        // Get output tensor (first output)
+        const outputName = session.outputNames[0];
+        const outputData = outputs[outputName];
+
+        if (detectionFrame === 0) log(`Output shape: [${outputData.dims.join(', ')}], data length: ${outputData.data.length}`);
+
+        // Parse detections from YOLO output
+        const detections = parseYOLOOutput(outputData.data, outputData.dims, webcam.videoWidth, webcam.videoHeight);
+
+        if (detectionFrame === 0) log(`Parsed ${detections.length} detections`);
+
         // Assign IDs and draw
-        assignObjectIds(finalDetections);
-        drawDetections(finalDetections);
+        assignObjectIds(detections);
+        drawDetections(detections);
         updateFPS();
 
-        if (finalDetections.length > 0) {
-            // log(`Detected ${finalDetections.length} objects`);
+        if (objectsEl) {
+            objectsEl.textContent = `Objetos: ${detections.length}`;
         }
+
+        detectionFrame++;
 
     } catch (error) {
         console.error('Detection error:', error);

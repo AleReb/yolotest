@@ -87,8 +87,8 @@ const numClass = labels.length;
 let mySession = null;
 
 // Configs
-const modelName = "yolov8n.onnx";
-const modelInputShape = [1, 3, 416, 416];
+const modelName = "yolo11n.onnx";
+const modelInputShape = [1, 3, 640, 640];
 const topk = 100;
 const iouThreshold = 0.45;
 const scoreThreshold = 0.2;
@@ -98,10 +98,7 @@ cv["onRuntimeInitialized"] = async () => {
   console.log("OpenCV initialized, loading ONNX models...");
   try {
     // create session
-    const [yolov8, nms] = await Promise.all([
-      ort.InferenceSession.create(`model/${modelName}`),
-      ort.InferenceSession.create(`model/nms-yolov8.onnx`),
-    ]);
+    const yolov8 = await ort.InferenceSession.create(`${modelName}`);
     console.log("Models loaded successfully");
 
     // warmup main model
@@ -113,7 +110,7 @@ cv["onRuntimeInitialized"] = async () => {
     await yolov8.run({ images: tensor });
     console.log("Model warmup complete");
 
-    mySession = { net: yolov8, nms: nms };
+    mySession = { net: yolov8 };
     console.log("Session initialized:", mySession);
   } catch (e) {
     console.error("Error initializing models:", e);
@@ -131,7 +128,7 @@ const detectImage = async (
   inputShape
 ) => {
   try {
-    if (!session || !session.net || !session.nms) {
+    if (!session || !session.net) {
       console.warn("Session not ready");
       return;
     }
@@ -139,37 +136,58 @@ const detectImage = async (
     const [modelWidth, modelHeight] = inputShape.slice(2);
     const [input, xRatio, yRatio] = preprocessing(image, modelWidth, modelHeight);
 
-    const tensor = new ort.Tensor("float32", input.data32F, inputShape); // to ort.Tensor
-    const config = new ort.Tensor("float32", new Float32Array([topk, iouThreshold, scoreThreshold])); // nms config tensor
-    const { output0 } = await session.net.run({ images: tensor }); // run session and get output layer
-    const { selected } = await session.nms.run({ detection: output0, config: config }); // perform nms and filter boxes
+    const tensor = new ort.Tensor("float32", input.data32F, inputShape);
+    const outputs = await session.net.run({ images: tensor });
 
     const boxes = [];
 
-    // looping through output
-    for (let idx = 0; idx < selected.dims[1]; idx++) {
-      const data = selected.data.slice(idx * selected.dims[2], (idx + 1) * selected.dims[2]); // get rows
-      const box = data.slice(0, 4);
-      const scores = data.slice(4); // classes probability scores
-      const score = Math.max(...scores); // maximum probability scores
-      const label = scores.indexOf(score); // class id of maximum probability scores
+    // YOLOv11 outputs: [1, 84, 8400] -> [batch, features, detections]
+    // where features = [x, y, w, h, confidence, class_scores...]
+    const output = Object.values(outputs)[0];
+    const data = output.data;
+    const [, numFeatures, numDetections] = output.dims;
 
-      const [x, y, w, h] = [
-        (box[0] - 0.5 * box[2]) * xRatio, // upscale left
-        (box[1] - 0.5 * box[3]) * yRatio, // upscale top
-        box[2] * xRatio, // upscale width
-        box[3] * yRatio, // upscale height
-      ]; // keep boxes in maxSize range
+    for (let i = 0; i < numDetections; i++) {
+      const offset = i * numFeatures;
+      const x = data[offset];
+      const y = data[offset + 1];
+      const w = data[offset + 2];
+      const h = data[offset + 3];
+      const confidence = data[offset + 4];
+
+      // Filter by score threshold
+      if (confidence < scoreThreshold) continue;
+
+      // Get class scores (everything after confidence)
+      let maxScore = 0;
+      let maxLabel = 0;
+      for (let j = 5; j < numFeatures; j++) {
+        const classScore = data[offset + j] * confidence; // multiply by objectness
+        if (classScore > maxScore) {
+          maxScore = classScore;
+          maxLabel = j - 5;
+        }
+      }
+
+      if (maxScore < scoreThreshold) continue;
+
+      // Convert from model coordinates to image coordinates
+      const [x1, y1, width, height] = [
+        (x - 0.5 * w) * xRatio,
+        (y - 0.5 * h) * yRatio,
+        w * xRatio,
+        h * yRatio,
+      ];
 
       boxes.push({
-        label: label,
-        probability: score,
-        bounding: [x, y, w, h], // upscale box
-      }); // update boxes to draw later
+        label: maxLabel,
+        probability: maxScore,
+        bounding: [x1, y1, width, height],
+      });
     }
 
-    renderBoxes(canvas, boxes); // Draw boxes
-    input.delete(); // delete unused Mat
+    renderBoxes(canvas, boxes);
+    input.delete();
   } catch (e) {
     console.error("Detection error:", e);
   }
