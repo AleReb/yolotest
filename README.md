@@ -2,7 +2,13 @@
 
 Sistema web de **detección de postura humana** y **detección de objetos** en tiempo real utilizando **YOLOv11** y **ONNX Runtime**. Funciona completamente en el navegador usando la cámara web.
 
-## 🎯 Características
+## � Demo en Vivo
+
+**Prueba la aplicación aquí:** [https://alereb.github.io/yolotest/](https://alereb.github.io/yolotest/)
+
+> **Nota:** Necesitarás permitir el acceso a la cámara web en tu navegador.
+
+## �🎯 Características
 
 ### Dos Modos de Detección
 
