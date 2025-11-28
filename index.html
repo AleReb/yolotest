@@ -4,15 +4,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>YOLO Object Tracking - Web</title>
-    <link rel="stylesheet" href="style.css">
+    <title>Human Pose Tracking - Web</title>
+    <link rel="stylesheet" href="style.css?v=2">
 </head>
 
 <body>
     <div class="container">
         <header>
-            <h1>🎯 YOLO Object Tracking</h1>
-            <p class="subtitle">Detección y seguimiento de objetos en tiempo real</p>
+            <h1>🧘 Human Pose Tracking</h1>
+            <p class="subtitle">Detección de postura y seguimiento de personas en tiempo real</p>
         </header>
 
         <main>
@@ -21,16 +21,29 @@
                 <canvas id="canvas"></canvas>
                 <div id="loading" class="loading">
                     <div class="spinner"></div>
-                    <p>Cargando modelo YOLO...</p>
+                    <p>Cargando modelo Pose...</p>
                 </div>
             </div>
 
             <div class="controls">
                 <button id="startBtn" class="btn btn-primary">▶ Iniciar Cámara</button>
                 <button id="stopBtn" class="btn btn-secondary" disabled>⏸ Detener</button>
+
+                <div class="control-group">
+                    <label>Modelo:</label>
+                    <select id="modelType" class="select-input">
+                        <option value="pose">Detección de Postura (Pose)</option>
+                        <option value="object">Detección de Objetos (YOLO)</option>
+                    </select>
+                </div>
+
                 <label class="checkbox-label">
                     <input type="checkbox" id="showTrails" checked>
                     Mostrar Estelas
+                </label>
+                <label class="checkbox-label">
+                    <input type="checkbox" id="showSkeletonOnly">
+                    Solo Esqueleto
                 </label>
                 <label class="checkbox-label">
                     <input type="checkbox" id="performanceMode" checked>
@@ -38,7 +51,7 @@
                 </label>
                 <div class="stats">
                     <span id="fps">FPS: 0</span>
-                    <span id="objects">Objetos: 0</span>
+                    <span id="objects">Personas: 0</span>
                 </div>
             </div>
 
@@ -46,10 +59,10 @@
                 <h3>ℹ️ Información</h3>
                 <ul>
                     <li>Presiona "Iniciar Cámara" para comenzar</li>
-                    <li>El sistema detectará y seguirá objetos automáticamente</li>
+                    <li>El sistema detectará el esqueleto de las personas</li>
                     <li>Las líneas grises muestran la trayectoria de movimiento</li>
                     <li>El texto indica la dirección del movimiento</li>
-                    <li>Desactuva "Modo Rendimiento" si quieres probar un modelo más grande</li>
+                    <li>Desactiva "Modo Rendimiento" para mayor precisión (más lento)</li>
                 </ul>
             </div>
 
@@ -67,7 +80,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
-    <script src="yolo.js"></script>
+    <script src="yolo.js?v=3"></script>
 </body>
 
 </html>

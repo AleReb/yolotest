@@ -3,6 +3,21 @@
 Export YOLOv11n to ONNX format for web browser use
 """
 
+"""
+YOLO Model Export Script
+
+Exports YOLOv11 models to ONNX format for web deployment.
+Supports both Pose Estimation and Object Detection models.
+
+Usage:
+    python export_model.py
+
+Modify the MODELS list below to export different models or sizes.
+
+Author: Alejandro Rebolledo (arebolledo@udd.cl)
+License: CC BY-NC 4.0
+"""
+
 from ultralytics import YOLO
 import os
 import sys
@@ -17,17 +32,17 @@ def main():
     print(f"Working directory: {cwd}")
 
     try:
-        print("\n1. Loading YOLOv11n model...")
-        model_path = os.path.join(cwd, "yolo11n.pt")
+        print("\n1. Loading YOLOv11n-pose model...")
+        model_path = os.path.join(cwd, "yolo11n-pose.pt")
         if not os.path.exists(model_path):
             print(f"   Downloading model to {model_path}...")
         
-        model = YOLO("yolo11n.pt")  
+        model = YOLO("yolo11n-pose.pt")  
         print("   OK: Model loaded")
 
         configs = [
-            {"name": "yolo11n-320.onnx", "size": 320},
-            {"name": "yolo11n.onnx", "size": 640}
+            {"name": "yolo11n-pose-320.onnx", "size": 320},
+            {"name": "yolo11n-pose.onnx", "size": 640}
         ]
 
         for config in configs:

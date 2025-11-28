@@ -1,9 +1,22 @@
+/**
+ * YOLO Pose & Object Detection - Web Version
+ * 
+ * Real-time human pose estimation and object detection using YOLOv11 and ONNX Runtime Web.
+ * Supports two modes:
+ * - Pose: Detects people and displays 17 skeletal keypoints
+ * - Object: Detects 80 COCO object classes
+ * 
+ * Author: Alejandro Rebolledo (arebolledo@udd.cl)
+ * License: CC BY-NC 4.0
+ * Based on Ultralytics YOLO architecture
+ */
+
 // YOLO Object Tracking - Web Version
 // Adapted from GitHub example for YOLOv8/v11 ONNX
 
 // Configuration
 const CONFIG = {
-    modelPath: 'yolo11n-320.onnx', // Default to Lite model
+    modelPath: 'yolo11n-pose-320.onnx', // Default to Lite Pose model
     inputSize: 320,                // Default to 320
     confidenceThreshold: 0.25,
     iouThreshold: 0.45,
@@ -46,7 +59,9 @@ let trackHistory = {};
 let nextObjectId = 0;
 let fpsCounter = { frames: 0, lastTime: Date.now() };
 let showTrails = true;
+let showSkeletonOnly = false; // New toggle
 let performanceMode = true; // Default to true
+let currentModelType = 'pose'; // 'pose' or 'object'
 let frameCount = 0;
 
 // DOM elements
@@ -58,7 +73,9 @@ const stopBtn = document.getElementById('stopBtn');
 const fpsEl = document.getElementById('fps');
 const objectsEl = document.getElementById('objects');
 const showTrailsCheckbox = document.getElementById('showTrails');
+const showSkeletonOnlyCheckbox = document.getElementById('showSkeletonOnly');
 const performanceCheckbox = document.getElementById('performanceMode');
+const modelTypeSelect = document.getElementById('modelType');
 
 // Debug logging
 function log(msg) {
@@ -73,8 +90,16 @@ function log(msg) {
 }
 
 // Initialize
-async function init(modelName = 'yolo11n-320.onnx', size = 320) {
+async function init(type = 'pose', size = 320) {
     try {
+        // Determine model name based on type and size
+        let modelName = '';
+        if (type === 'pose') {
+            modelName = size === 320 ? 'yolo11n-pose-320.onnx' : 'yolo11n-pose.onnx';
+        } else {
+            modelName = size === 320 ? 'yolo11n-320.onnx' : 'yolo11n.onnx';
+        }
+
         // Stop any existing loop
         if (animationId) {
             cancelAnimationFrame(animationId);
@@ -83,13 +108,28 @@ async function init(modelName = 'yolo11n-320.onnx', size = 320) {
 
         // Show loading
         const loadingEl = document.getElementById('loading');
-        if (loadingEl) loadingEl.style.display = 'flex';
+        if (loadingEl) {
+            loadingEl.style.display = 'flex';
+            loadingEl.querySelector('p').textContent = `Cargando modelo ${type === 'pose' ? 'Pose' : 'YOLO'}...`;
+        }
 
         log(`Switching to model: ${modelName} (${size}x${size})...`);
 
         // Update config
         CONFIG.modelPath = modelName;
         CONFIG.inputSize = size;
+        currentModelType = type;
+
+        // Update UI state
+        if (showSkeletonOnlyCheckbox) {
+            if (type === 'pose') {
+                showSkeletonOnlyCheckbox.parentElement.style.display = 'flex';
+            } else {
+                showSkeletonOnlyCheckbox.parentElement.style.display = 'none';
+                showSkeletonOnlyCheckbox.checked = false;
+                showSkeletonOnly = false;
+            }
+        }
 
         if (typeof ort === 'undefined') {
             throw new Error('onnxruntime-web script not loaded! Check internet connection.');
@@ -195,49 +235,112 @@ async function prepare_input(video) {
 function process_output(output, img_width, img_height) {
     let boxes = [];
 
-    // Calculate number of anchors dynamically
-    // Output shape is [1, 84, N] -> flattened is 84 * N
-    // So N = length / 84
-    const numAnchors = output.length / 84;
+    // YOLOv8 output shape is [1, channels, N] where:
+    // - Pose: channels = 56 (4 box + 1 conf + 17*3 keypoints)
+    // - Detection: channels = 84 (4 box + 80 classes)
+    const numChannels = currentModelType === 'pose' ? 56 : 84;
+    const numAnchors = output.length / numChannels;
 
-    for (let index = 0; index < numAnchors; index++) {
-        // Find class with max probability
-        // The output is transposed: [84, N]
-        // [cx, cy, w, h, class0 ... class79]
-        // Stride is numAnchors
-
-        const [class_id, prob] = [...Array(80).keys()]
-            .map(col => [col, output[numAnchors * (col + 4) + index]])
-            .reduce((accum, item) => item[1] > accum[1] ? item : accum, [0, 0]);
-
-        if (prob < CONFIG.confidenceThreshold) {
-            continue;
+    // Transpose from [channels, N] to [N, channels]
+    const transposed = [];
+    for (let i = 0; i < numAnchors; i++) {
+        const row = [];
+        for (let j = 0; j < numChannels; j++) {
+            row.push(output[j * numAnchors + i]);
         }
+        transposed.push(row);
+    }
 
-        const label = COCO_CLASSES[class_id];
-        const xc = output[index];
-        const yc = output[numAnchors + index];
-        const w = output[2 * numAnchors + index];
-        const h = output[3 * numAnchors + index];
+    for (let i = 0; i < transposed.length; i++) {
+        const row = transposed[i];
+        let prob = 0;
+        let classId = 0;
+        let label = 'person';
+        let keypoints = null;
 
-        // Convert to image coordinates
-        const x1 = (xc - w / 2) / CONFIG.inputSize * img_width;
-        const y1 = (yc - h / 2) / CONFIG.inputSize * img_height;
-        const x2 = (xc + w / 2) / CONFIG.inputSize * img_width;
-        const y2 = (yc + h / 2) / CONFIG.inputSize * img_height;
+        if (currentModelType === 'pose') {
+            // Pose: row = [xc, yc, w, h, conf, kp0_x, kp0_y, kp0_conf, ...]
+            prob = row[4];
+            if (prob < CONFIG.confidenceThreshold) continue;
 
-        // Store as center coordinates for tracking
-        boxes.push({
-            x: x1,
-            y: y1,
-            w: x2 - x1,
-            h: y2 - y1,
-            cx: (x1 + x2) / 2,
-            cy: (y1 + y2) / 2,
-            class: label,
-            score: prob,
-            classId: class_id
-        });
+            const xc = row[0];
+            const yc = row[1];
+            const w = row[2];
+            const h = row[3];
+
+            // Extract keypoints
+            keypoints = [];
+            for (let k = 0; k < 17; k++) {
+                const kx = row[5 + k * 3];
+                const ky = row[5 + k * 3 + 1];
+                const kconf = row[5 + k * 3 + 2];
+                const x = kx / CONFIG.inputSize * img_width;
+                const y = ky / CONFIG.inputSize * img_height;
+                keypoints.push({ x, y, conf: kconf });
+            }
+
+            // Convert to image coordinates
+            const x1 = (xc - w / 2) / CONFIG.inputSize * img_width;
+            const y1 = (yc - h / 2) / CONFIG.inputSize * img_height;
+            const x2 = (xc + w / 2) / CONFIG.inputSize * img_width;
+            const y2 = (yc + h / 2) / CONFIG.inputSize * img_height;
+
+            boxes.push({
+                x: x1,
+                y: y1,
+                w: x2 - x1,
+                h: y2 - y1,
+                cx: (x1 + x2) / 2,
+                cy: (y1 + y2) / 2,
+                class: label,
+                score: prob,
+                classId: 0,
+                keypoints: keypoints
+            });
+        } else {
+            // Object Detection: row = [xc, yc, w, h, class0_conf, class1_conf, ...]
+            // Find max class probability
+            let maxScore = -Infinity;
+            let maxClassId = -1;
+
+            for (let c = 0; c < 80; c++) {
+                const score = row[4 + c];
+                if (score > maxScore) {
+                    maxScore = score;
+                    maxClassId = c;
+                }
+            }
+
+            prob = maxScore;
+            if (prob < CONFIG.confidenceThreshold) continue;
+
+            classId = maxClassId;
+            label = COCO_CLASSES[classId];
+
+            const xc = row[0];
+            const yc = row[1];
+            const w = row[2];
+            const h = row[3];
+
+            // Convert to image coordinates
+            const x1 = (xc - w / 2) / CONFIG.inputSize * img_width;
+            const y1 = (yc - h / 2) / CONFIG.inputSize * img_height;
+            const x2 = (xc + w / 2) / CONFIG.inputSize * img_width;
+            const y2 = (yc + h / 2) / CONFIG.inputSize * img_height;
+
+            boxes.push({
+                x: x1,
+                y: y1,
+                w: x2 - x1,
+                h: y2 - y1,
+                cx: (x1 + x2) / 2,
+                cy: (y1 + y2) / 2,
+                class: label,
+                score: prob,
+                classId: classId,
+                keypoints: null
+            });
+        }
     }
 
     // Sort by probability
@@ -339,6 +442,14 @@ function getDirection(objectId) {
 }
 
 // Draw detections
+// Skeleton connections (COCO format)
+const SKELETON = [
+    [5, 7], [7, 9], [6, 8], [8, 10], // Arms
+    [5, 6], [5, 11], [6, 12], [11, 12], // Torso
+    [11, 13], [13, 15], [12, 14], [14, 16], // Legs
+    [0, 1], [0, 2], [1, 3], [2, 4] // Face
+];
+
 function drawDetections(detections) {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -348,11 +459,7 @@ function drawDetections(detections) {
 
         for (const [id, history] of Object.entries(trackHistory)) {
             if (history.length < 2) continue;
-
-            // Use same color for trail as object if possible, or default grey
-            // We don't easily have classId here without storing it in history
             ctx.strokeStyle = 'rgba(230, 230, 230, 0.5)';
-
             ctx.beginPath();
             ctx.moveTo(history[0].x, history[0].y);
             for (let i = 1; i < history.length; i++) {
@@ -363,37 +470,68 @@ function drawDetections(detections) {
     }
 
     detections.forEach(det => {
-        // Get color based on class ID
-        const color = COLORS[det.classId % COLORS.length];
+        // Get color based on ID (consistent color for same person)
+        const color = COLORS[det.id % COLORS.length];
 
         // Draw bounding box
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 3;
-        ctx.strokeRect(det.x, det.y, det.w, det.h);
+        if (!showSkeletonOnly) {
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.strokeRect(det.x, det.y, det.w, det.h);
+        }
+
+        // Draw Skeleton
+        if (det.keypoints) {
+            // Draw lines
+            ctx.lineWidth = 2;
+            ctx.strokeStyle = color;
+            SKELETON.forEach(([i, j]) => {
+                const kp1 = det.keypoints[i];
+                const kp2 = det.keypoints[j];
+                if (kp1.conf > 0.5 && kp2.conf > 0.5) {
+                    ctx.beginPath();
+                    ctx.moveTo(kp1.x, kp1.y);
+                    ctx.lineTo(kp2.x, kp2.y);
+                    ctx.stroke();
+                }
+            });
+
+            // Draw points
+            det.keypoints.forEach(kp => {
+                if (kp.conf > 0.5) {
+                    ctx.beginPath();
+                    ctx.arc(kp.x, kp.y, 3, 0, 2 * Math.PI);
+                    ctx.fillStyle = '#FFFFFF';
+                    ctx.fill();
+                }
+            });
+        }
 
         // Draw label
-        const direction = getDirection(det.id);
-        const label = `ID:${det.id} ${det.class} ${Math.round(det.score * 100)}%`;
-        const subLabel = direction;
+        if (!showSkeletonOnly) {
+            const direction = getDirection(det.id);
+            const label = `ID:${det.id} ${det.class} ${Math.round(det.score * 100)}%`;
+            const subLabel = direction;
 
-        ctx.font = '16px Arial';
-        const textMetrics = ctx.measureText(label);
-        const textX = det.x;
-        const textY = det.y - 5;
+            ctx.font = '16px Arial';
+            const textMetrics = ctx.measureText(label);
+            const textX = det.x;
+            const textY = det.y - 5;
 
-        // Background for text
-        ctx.fillStyle = color; // Use same color but maybe transparent?
-        ctx.globalAlpha = 0.7;
-        ctx.fillRect(textX, textY - 20, textMetrics.width + 10, 45);
-        ctx.globalAlpha = 1.0;
+            // Background for text
+            ctx.fillStyle = color;
+            ctx.globalAlpha = 0.7;
+            ctx.fillRect(textX, textY - 20, textMetrics.width + 10, 45);
+            ctx.globalAlpha = 1.0;
 
-        // Text color (Black is usually good on neon colors)
-        ctx.fillStyle = '#000000';
-        ctx.fillText(label, textX + 5, textY);
-        ctx.fillText(subLabel, textX + 5, textY + 20);
+            // Text color
+            ctx.fillStyle = '#000000';
+            ctx.fillText(label, textX + 5, textY);
+            ctx.fillText(subLabel, textX + 5, textY + 20);
+        }
     });
 
-    if (objectsEl) objectsEl.textContent = `Objetos: ${detections.length}`;
+    if (objectsEl) objectsEl.textContent = `Personas: ${detections.length}`;
 }
 
 // Update FPS
@@ -440,16 +578,27 @@ showTrailsCheckbox.addEventListener('change', (e) => {
     showTrails = e.target.checked;
 });
 
+if (showSkeletonOnlyCheckbox) {
+    showSkeletonOnlyCheckbox.addEventListener('change', (e) => {
+        showSkeletonOnly = e.target.checked;
+    });
+}
+
+if (modelTypeSelect) {
+    modelTypeSelect.addEventListener('change', (e) => {
+        const type = e.target.value;
+        const size = performanceMode ? 320 : 640;
+        init(type, size);
+    });
+}
+
 if (performanceCheckbox) {
     performanceCheckbox.addEventListener('change', (e) => {
-        const isPerformance = e.target.checked;
-        if (isPerformance) {
-            init('yolo11n-320.onnx', 320);
-        } else {
-            init('yolo11n.onnx', 640);
-        }
+        performanceMode = e.target.checked;
+        const size = performanceMode ? 320 : 640;
+        init(currentModelType, size);
     });
 }
 
 // Initialize on load
-init('yolo11n-320.onnx', 320);
+init('pose', 320);

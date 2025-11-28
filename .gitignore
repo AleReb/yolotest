@@ -1,15 +1,24 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
+# Python virtual environments (users should create their own)
 .venv/
 venv/
 env/
+__pycache__/
+*.py[cod]
+*$py.class
 
-# VS Code
+# IDE
 .vscode/
+.idea/
 
-# Project specific
+# AI Assistants
+.claude/
+.gemini/
+
+# Project specific - temporary files
 *.pt
 export.log
-.gemini/
+
+# OS
+.DS_Store
+Thumbs.db
+*.swp
