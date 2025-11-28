@@ -63,6 +63,8 @@ let showSkeletonOnly = false; // New toggle
 let performanceMode = true; // Default to true
 let currentModelType = 'pose'; // 'pose' or 'object'
 let frameCount = 0;
+let availableCameras = [];
+let selectedCameraId = null;
 
 // DOM elements
 const webcam = document.getElementById('webcam');
@@ -76,6 +78,7 @@ const showTrailsCheckbox = document.getElementById('showTrails');
 const showSkeletonOnlyCheckbox = document.getElementById('showSkeletonOnly');
 const performanceCheckbox = document.getElementById('performanceMode');
 const modelTypeSelect = document.getElementById('modelType');
+const cameraSelect = document.getElementById('cameraSelect');
 
 // Debug logging
 function log(msg) {
@@ -166,13 +169,53 @@ async function init(type = 'pose', size = 320) {
     }
 }
 
+// Enumerate cameras
+async function enumerateCameras() {
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        availableCameras = devices.filter(device => device.kind === 'videoinput');
+
+        if (availableCameras.length > 0) {
+            cameraSelect.innerHTML = '';
+            availableCameras.forEach((camera, index) => {
+                const option = document.createElement('option');
+                option.value = camera.deviceId;
+                option.text = camera.label || `Cámara ${index + 1}`;
+                cameraSelect.appendChild(option);
+            });
+
+            // Select first camera by default
+            selectedCameraId = availableCameras[0].deviceId;
+            log(`Found ${availableCameras.length} camera(s)`);
+        } else {
+            cameraSelect.innerHTML = '<option value="">No hay cámaras disponibles</option>';
+        }
+    } catch (error) {
+        console.error('Error enumerating cameras:', error);
+        log(`ERROR: ${error.message}`);
+    }
+}
+
 // Start webcam
 async function startWebcam() {
     try {
         log('Requesting camera access...');
-        stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: 1280, height: 720, facingMode: 'user' }
-        });
+
+        const constraints = {
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 }
+            }
+        };
+
+        // Use selected camera if available
+        if (selectedCameraId) {
+            constraints.video.deviceId = { exact: selectedCameraId };
+        } else {
+            constraints.video.facingMode = 'user';
+        }
+
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
         webcam.srcObject = stream;
 
         webcam.onloadedmetadata = () => {
@@ -180,6 +223,7 @@ async function startWebcam() {
             canvas.height = webcam.videoHeight;
             startBtn.disabled = true;
             stopBtn.disabled = false;
+            cameraSelect.disabled = true;
             log(`Camera ready: ${webcam.videoWidth}x${webcam.videoHeight}`);
             log('Starting detection loop...');
             detectObjects();
@@ -203,6 +247,7 @@ function stopWebcam() {
     }
     startBtn.disabled = false;
     stopBtn.disabled = true;
+    cameraSelect.disabled = false;
     log('Detection stopped');
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 }
@@ -600,5 +645,19 @@ if (performanceCheckbox) {
     });
 }
 
-// Initialize on load
+if (cameraSelect) {
+    cameraSelect.addEventListener('change', (e) => {
+        selectedCameraId = e.target.value;
+        log(`Camera selected: ${selectedCameraId}`);
+
+        // If camera is running, restart with new camera
+        if (stream) {
+            stopWebcam();
+            setTimeout(() => startWebcam(), 500);
+        }
+    });
+}
+
+// Initialize cameras and model on load
+enumerateCameras();
 init('pose', 320);

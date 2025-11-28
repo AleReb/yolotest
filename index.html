@@ -30,6 +30,13 @@
                 <button id="stopBtn" class="btn btn-secondary" disabled>⏸ Detener</button>
 
                 <div class="control-group">
+                    <label>Cámara:</label>
+                    <select id="cameraSelect" class="select-input">
+                        <option value="">Cargando cámaras...</option>
+                    </select>
+                </div>
+
+                <div class="control-group">
                     <label>Modelo:</label>
                     <select id="modelType" class="select-input">
                         <option value="pose">Detección de Postura (Pose)</option>
@@ -80,7 +87,7 @@
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web@1.16.3/dist/ort.min.js"></script>
-    <script src="yolo.js?v=3"></script>
+    <script src="yolo.js?v=4"></script>
 </body>
 
 </html>
